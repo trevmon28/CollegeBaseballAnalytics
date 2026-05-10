@@ -308,6 +308,8 @@ function renderRankings(){
   }],Object.assign({},LB,{
     title:{text:'Top 25 Power Rankings (Eligible)',font:{color:'#e2e8f0',size:13}},
     xaxis:Object.assign({},LB.xaxis,{range:[top25[0].power_score-0.3,top25[top25.length-1].power_score+0.4]}),
+    yaxis:Object.assign({},LB.yaxis,{automargin:true}),
+    margin:Object.assign({},LB.margin,{l:160,r:60}),
     height:540,
   }),CFG);
 }
@@ -357,7 +359,8 @@ function renderProfile(team){
   }],Object.assign({},LB,{
     title:{text:team+' -- Percentile vs All D-I Teams',font:{color:'#e2e8f0',size:13}},
     xaxis:Object.assign({},LB.xaxis,{range:[0,132],tickvals:[0,25,50,75,100],ticktext:['0','25th','50th','75th','100th']}),
-    yaxis:Object.assign({},LB.yaxis,{autorange:'reversed'}),
+    yaxis:Object.assign({},LB.yaxis,{autorange:'reversed',automargin:true}),
+    margin:Object.assign({},LB.margin,{l:160,r:80}),
     height:380,
     shapes:[{type:'line',x0:50,x1:50,y0:-0.5,y1:labels.length-0.5,line:{color:'#4a6080',width:1,dash:'dash'}}],
   }),CFG);
