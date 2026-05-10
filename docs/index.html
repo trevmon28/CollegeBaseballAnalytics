@@ -269,7 +269,7 @@ function renderRankings(){
 
   document.getElementById('rthead').innerHTML = '<tr>'+COLS.map(function(c){
     var arr = sortCol===c.k?(sortAsc?' ^':' v'):'';
-    return '<th onclick="sortBy(''+c.k+'')">'+c.h+arr+'</th>';
+    return '<th onclick="sortBy(\''+c.k+'\')">'+c.h+arr+'</th>';
   }).join('')+'</tr>';
 
   document.getElementById('rtbody').innerHTML = data.map(function(t){
