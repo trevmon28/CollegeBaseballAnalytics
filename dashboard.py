@@ -162,9 +162,18 @@ CONF_COLOR = {
     'MAAC':'#9d4edd','America East':'#0077b6','Southland':'#e07a5f',
 }
 
-# ── data loading & computation ─────────────────────────────────────────────────
-BASE = pathlib.Path(__file__).parent / 'data'
+# ── environment detection ──────────────────────────────────────────────────────
+try:
+    import google.colab
+    IN_COLAB = True
+    from google.colab import drive
+    drive.mount('/content/drive', force_remount=False)
+    BASE = pathlib.Path('/content/drive/MyDrive/CollegeBaseballAnalytics')
+except ImportError:
+    IN_COLAB = False
+    BASE = pathlib.Path(__file__).parent / 'data'
 
+# ── data loading & computation ─────────────────────────────────────────────────
 games      = pd.read_parquet(BASE / 'game_results_2021_2026.parquet')
 team_stats = pd.read_parquet(BASE / 'team_season_stats_2021_2026.parquet')
 games['season']      = games['season'].astype(int)
@@ -783,4 +792,7 @@ def update_predictor(_, home, away, neutral):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    if IN_COLAB:
+        app.run(jupyter_mode='inline', jupyter_height=800, debug=False)
+    else:
+        app.run(debug=True, port=8050)
