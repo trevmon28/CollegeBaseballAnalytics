@@ -261,7 +261,7 @@ function sortBy(col) {
   renderRankings();
 }
 function renderRankings() {
-  const conf   = document.getElementById('conf-filter').value;
+  const conf   = document.getElementById('conf-filter').value || 'ALL';
   const search = (document.getElementById('team-search').value || '').toLowerCase();
   let data = TEAMS.filter(t =>
     (conf === 'ALL' || t.conference === conf) &&
