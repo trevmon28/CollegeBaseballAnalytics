@@ -30,10 +30,39 @@ cells.append(md_cell("""# College Baseball Analytics — Power Rankings & Game P
 cells.append(md_cell("## Section 1 — Setup & Data Loading"))
 
 cells.append(code_cell("""\
-# Install packages
+# Install packages (safe to re-run; -q suppresses noise)
 !pip install -q git+https://github.com/nathanblumenfeld/collegebaseball.git
 !pip install -q git+https://github.com/CodeMateo15/CollegeBaseballStatsPackage.git
-!pip install -q xgboost scikit-learn fastai requests beautifulsoup4 lxml pyarrow"""))
+!pip install -q xgboost scikit-learn fastai requests beautifulsoup4 lxml pyarrow python-dotenv"""))
+
+cells.append(code_cell("""\
+# ── Package diagnostics — shows exactly what installed and what works ──────────
+import subprocess, sys
+
+print("=== Package Status ===")
+for pkg in ['collegebaseball', 'ncaa_bbStats', 'xgboost', 'fastai', 'pyarrow', 'beautifulsoup4']:
+    result = subprocess.run([sys.executable, '-m', 'pip', 'show', pkg],
+                            capture_output=True, text=True)
+    installed = 'Version:' in result.stdout
+    ver = next((l for l in result.stdout.split('\\n') if l.startswith('Version:')), 'NOT INSTALLED')
+    print(f"  {'OK' if installed else '--'} {pkg:<28} {ver}")
+
+print("\\n=== Quick pull test (one year each) ===")
+try:
+    from collegebaseball import ncaa_scraper
+    df = ncaa_scraper.ncaa_team_batting(year=2024, division=1)
+    print(f"  collegebaseball : OK — {len(df)} teams, cols: {df.columns.tolist()[:6]}")
+except Exception as e:
+    print(f"  collegebaseball : FAIL — {type(e).__name__}: {e}")
+
+try:
+    from ncaa_bbStats import get_team_stats
+    df = get_team_stats(year=2024, division='D1')
+    print(f"  ncaa_bbStats    : OK — {len(df)} teams")
+except Exception as e:
+    print(f"  ncaa_bbStats    : FAIL — {type(e).__name__}: {e}")
+
+print("\\nShare the output above if data loading fails in the next cell.")"""))
 
 cells.append(code_cell("""\
 import warnings, os, json, re, time
@@ -68,28 +97,58 @@ WOBA_SCALE   = 0.320   # league-average wOBA target for normalisation
 print("Imports complete.")"""))
 
 cells.append(code_cell("""\
-# Mount Google Drive and set cache path
-from google.colab import drive
-drive.mount('/content/drive')
+# ── Environment detection: Colab vs. VS Code / local Jupyter ──────────────────
+try:
+    import google.colab
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
 
-CACHE_DIR = '/content/drive/MyDrive/CollegeBaseballAnalytics/'
+if IN_COLAB:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    CACHE_DIR = '/content/drive/MyDrive/CollegeBaseballAnalytics/'
+else:
+    # Local path — data/ sits next to this notebook
+    import pathlib
+    CACHE_DIR = str(pathlib.Path(__file__).parent / 'data') + '/' if '__file__' in dir() else 'data/'
+    # Load .env for secrets (pip install python-dotenv, or set env vars manually)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass  # fine — secrets can still be set as OS env vars
+
 os.makedirs(CACHE_DIR, exist_ok=True)
-print(f"Cache directory: {CACHE_DIR}")"""))
+print(f"Environment : {'Google Colab' if IN_COLAB else 'Local / VS Code'}")
+print(f"Cache dir   : {CACHE_DIR}")"""))
 
 # ── DATA LOADING: TEAM SEASON STATS ───────────────────────────────────────────
+cells.append(md_cell("""\
+### Data Loading — Important Note
+stats.ncaa.org **blocks Google Colab IPs** (403 Forbidden). Pull the data once from a local machine:
+```
+python pull_ncaa_data.py          # run locally in VS Code terminal
+```
+Then upload `data/team_batting_2021_2025.parquet` and `data/team_pitching_2021_2025.parquet`
+to **My Drive / CollegeBaseballAnalytics/** in Google Drive.
+
+After that one-time setup, the notebook loads instantly from Drive cache every run."""))
+
 cells.append(code_cell("""\
-# Pull D1 team batting + pitching season stats via collegebaseball package
-# Falls back to direct stats.ncaa.org scraping on error
+# Pull D1 team batting + pitching season stats.
+# Primary path: Drive cache (populated by pull_ncaa_data.py run locally).
+# Fallback: live sources (work locally / VS Code, blocked in Colab).
 try:
     from collegebaseball import ncaa_scraper
     _scraper_available = True
 except ImportError:
     _scraper_available = False
-    print("collegebaseball not available — will use CollegeBaseballStatsPackage")
 
 BATTING_CACHE  = CACHE_DIR + 'team_batting_2021_2025.parquet'
 PITCHING_CACHE = CACHE_DIR + 'team_pitching_2021_2025.parquet'
 
+# ── Source 1: collegebaseball package ─────────────────────────────────────────
 def _pull_via_scraper():
     bat_frames, pit_frames = [], []
     for yr in ALL_YEARS:
@@ -104,8 +163,11 @@ def _pull_via_scraper():
         except Exception as e:
             print(f"  {yr} error: {e}")
         time.sleep(0.5)
+    if not bat_frames or not pit_frames:
+        raise RuntimeError("No data for any year")
     return pd.concat(bat_frames, ignore_index=True), pd.concat(pit_frames, ignore_index=True)
 
+# ── Source 2: CollegeBaseballStatsPackage ─────────────────────────────────────
 def _pull_via_stats_package():
     try:
         from ncaa_bbStats import get_team_stats
@@ -118,27 +180,122 @@ def _pull_via_stats_package():
                 print(f"  {yr}: {len(df)} teams")
             except Exception as e:
                 print(f"  {yr} error: {e}")
-        return pd.concat(frames, ignore_index=True)
+        return pd.concat(frames, ignore_index=True) if frames else None
     except ImportError:
         return None
+
+# ── Source 3: Direct stats.ncaa.org scrape (no extra packages needed) ─────────
+def _pull_direct_ncaa():
+    from bs4 import BeautifulSoup
+    # Stat sequences: batting_avg=148, OBP=149, slugging=151, HR/g=155, K/g=159, BB/g=157
+    # Pitching:       ERA=2, WHIP=9, K/9=8, BB/9=10, HR/9=36
+    BAT_STATS = {'BA':148,'OBP':149,'SLG':151,'HR_g':155,'K_g':159,'BB_g':157,'R_g':150,'H_g':152}
+    PIT_STATS = {'ERA':2,'WHIP':9,'K9':8,'BB9':10}
+    HEADERS   = {'User-Agent': 'Mozilla/5.0'}
+    BASE      = 'https://stats.ncaa.org/rankings/national_ranking'
+
+    def _scrape_stat(yr, stat_seq):
+        url = BASE
+        params = f'?academic_year={yr}&division=1&ranking_period=0&sport_code=MBA&stat_seq={stat_seq}'
+        r = requests.get(url + params, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, 'lxml')
+        tbl  = soup.find('table', {'id': 'rankings_table'})
+        if tbl is None:
+            tbl = soup.find('table')
+        if tbl is None:
+            return pd.DataFrame()
+        return pd.read_html(str(tbl))[0]
+
+    bat_frames, pit_frames = [], []
+    for yr in ALL_YEARS:
+        print(f"  Direct scrape {yr} …", end=' ')
+        bat_dfs, pit_dfs = [], []
+        for name, seq in BAT_STATS.items():
+            try:
+                df = _scrape_stat(yr, seq)
+                if len(df) > 0:
+                    team_col = [c for c in df.columns if 'team' in c.lower() or 'school' in c.lower()]
+                    val_col  = [c for c in df.columns if c not in ['Rank','#'] and c not in team_col]
+                    if team_col and val_col:
+                        sub = df[[team_col[0], val_col[0]]].rename(
+                            columns={team_col[0]: 'team', val_col[0]: name})
+                        bat_dfs.append(sub.set_index('team'))
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"(bat {name}: {e})", end=' ')
+        for name, seq in PIT_STATS.items():
+            try:
+                df = _scrape_stat(yr, seq)
+                if len(df) > 0:
+                    team_col = [c for c in df.columns if 'team' in c.lower() or 'school' in c.lower()]
+                    val_col  = [c for c in df.columns if c not in ['Rank','#'] and c not in team_col]
+                    if team_col and val_col:
+                        sub = df[[team_col[0], val_col[0]]].rename(
+                            columns={team_col[0]: 'team', val_col[0]: name})
+                        pit_dfs.append(sub.set_index('team'))
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"(pit {name}: {e})", end=' ')
+        if bat_dfs:
+            b = pd.concat(bat_dfs, axis=1).reset_index()
+            b['season'] = yr
+            bat_frames.append(b)
+        if pit_dfs:
+            p = pd.concat(pit_dfs, axis=1).reset_index()
+            p['season'] = yr
+            pit_frames.append(p)
+        print(f"{len(bat_dfs)}/{len(BAT_STATS)} bat stats, {len(pit_dfs)}/{len(PIT_STATS)} pit stats")
+
+    if not bat_frames:
+        raise RuntimeError("Direct NCAA scrape returned no data")
+    return (pd.concat(bat_frames, ignore_index=True),
+            pd.concat(pit_frames, ignore_index=True) if pit_frames else pd.DataFrame())
+
+# ── Run fallback chain ─────────────────────────────────────────────────────────
+batting_raw  = pd.DataFrame()
+pitching_raw = pd.DataFrame()
 
 if os.path.exists(BATTING_CACHE) and os.path.exists(PITCHING_CACHE):
     batting_raw  = pd.read_parquet(BATTING_CACHE)
     pitching_raw = pd.read_parquet(PITCHING_CACHE)
     print(f"Loaded from cache: {len(batting_raw)} batting rows, {len(pitching_raw)} pitching rows")
-elif _scraper_available:
-    print("Pulling from stats.ncaa.org …")
-    batting_raw, pitching_raw = _pull_via_scraper()
-    batting_raw.to_parquet(BATTING_CACHE)
-    pitching_raw.to_parquet(PITCHING_CACHE)
 else:
-    alt = _pull_via_stats_package()
-    if alt is not None:
-        batting_raw = alt
-        pitching_raw = alt.copy()
-    batting_raw.to_parquet(BATTING_CACHE)
-    pitching_raw.to_parquet(PITCHING_CACHE)
+    if _scraper_available:
+        print("Source 1: collegebaseball scraper …")
+        try:
+            batting_raw, pitching_raw = _pull_via_scraper()
+            print(f"  Success: {len(batting_raw)} batting rows")
+        except Exception as e:
+            print(f"  Failed: {e}")
 
+    if len(batting_raw) == 0:
+        print("Source 2: CollegeBaseballStatsPackage …")
+        alt = _pull_via_stats_package()
+        if alt is not None and len(alt) > 0:
+            batting_raw  = alt
+            pitching_raw = alt.copy()
+            print(f"  Success: {len(batting_raw)} rows")
+
+    if len(batting_raw) == 0:
+        print("Source 3: Direct stats.ncaa.org scrape …")
+        try:
+            batting_raw, pitching_raw = _pull_direct_ncaa()
+            print(f"  Success: {len(batting_raw)} batting rows")
+        except Exception as e:
+            print(f"  Failed: {e}")
+
+    if len(batting_raw) > 0:
+        batting_raw.to_parquet(BATTING_CACHE)
+        if len(pitching_raw) > 0:
+            pitching_raw.to_parquet(PITCHING_CACHE)
+        print(f"Cached to {CACHE_DIR}")
+    else:
+        print("All three sources failed. Run the diagnostics cell above and share the output.")
+
+print(f"batting_raw: {batting_raw.shape}  pitching_raw: {pitching_raw.shape}")
+if len(batting_raw) == 0:
+    raise RuntimeError("No team data loaded — run diagnostics cell and share output.")
 batting_raw.head(3)"""))
 
 # ── SECTION 1b: FEATURE ENGINEERING ───────────────────────────────────────────
@@ -174,6 +331,13 @@ def normalise_pitching_cols(df):
 
 batting_raw  = normalise_batting_cols(batting_raw)
 pitching_raw = normalise_pitching_cols(pitching_raw)
+
+# Ensure 'season' column survived normalisation
+for df, name in [(batting_raw, 'batting_raw'), (pitching_raw, 'pitching_raw')]:
+    if 'season' not in df.columns:
+        raise KeyError(f"'season' column missing from {name} after normalisation. "
+                       f"Available columns: {df.columns.tolist()}")
+
 print("Columns normalised.")
 print("Batting cols:", batting_raw.columns.tolist())
 print("Pitching cols:", pitching_raw.columns.tolist())"""))
@@ -922,19 +1086,25 @@ predict_games_table(upcoming)"""))
 cells.append(md_cell("## Section 7 — Betting Spread & Moneyline Integration"))
 
 cells.append(code_cell("""\
-# The Odds API — free tier (500 req/month). Set your key in Colab Secrets as ODDS_API_KEY
-try:
-    from google.colab import userdata
-    ODDS_API_KEY = userdata.get('ODDS_API_KEY')
-except Exception:
-    ODDS_API_KEY = None  # set manually: ODDS_API_KEY = 'your_key_here'
+# The Odds API — free tier (500 req/month).
+# Colab:   add ODDS_API_KEY to Colab Secrets (key icon in left sidebar)
+# VS Code: add ODDS_API_KEY=your_key to the .env file in the project root
+if IN_COLAB:
+    try:
+        from google.colab import userdata
+        ODDS_API_KEY = userdata.get('ODDS_API_KEY')
+    except Exception:
+        ODDS_API_KEY = None
+else:
+    ODDS_API_KEY = os.environ.get('ODDS_API_KEY')  # loaded from .env above
 
 ODDS_API_BASE = 'https://api.the-odds-api.com/v4'
 SPORT_KEY     = 'baseball_ncaa'  # check https://api.the-odds-api.com/v4/sports for key
 
 def fetch_live_odds():
     if not ODDS_API_KEY:
-        print("ODDS_API_KEY not set. Add to Colab Secrets.")
+        env_hint = "Colab Secrets" if IN_COLAB else ".env file (ODDS_API_KEY=...)"
+        print(f"ODDS_API_KEY not set. Add it to {env_hint}.")
         return pd.DataFrame()
     url = f"{ODDS_API_BASE}/sports/{SPORT_KEY}/odds"
     params = {'apiKey': ODDS_API_KEY, 'regions': 'us', 'markets': 'h2h,spreads', 'oddsFormat': 'american'}

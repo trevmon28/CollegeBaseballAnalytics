@@ -154,8 +154,8 @@ if __name__ == "__main__":
     print("1. Downloading sportsdataverse game results (2021-2023) ...")
     sdv_games = pull_sdv_games(years=[2021, 2022, 2023])
 
-    print("\n2. Fetching ESPN scoreboard results (2024-2025) ...")
-    espn_games = pull_espn_games(years=[2024, 2025])
+    print("\n2. Fetching ESPN scoreboard results (2024-2026) ...")
+    espn_games = pull_espn_games(years=[2024, 2025, 2026])
 
     print("\n3. Combining ...")
     all_games = pd.concat([sdv_games, espn_games], ignore_index=True)
@@ -167,8 +167,8 @@ if __name__ == "__main__":
     print(f"   Team-seasons: {len(team_stats)}  columns: {team_stats.columns.tolist()}")
 
     # Save
-    game_path = OUT_DIR / "game_results_2021_2025.parquet"
-    stat_path = OUT_DIR / "team_season_stats_2021_2025.parquet"
+    game_path = OUT_DIR / "game_results_2021_2026.parquet"
+    stat_path = OUT_DIR / "team_season_stats_2021_2026.parquet"
     all_games.to_parquet(game_path,  index=False)
     team_stats.to_parquet(stat_path, index=False)
 
