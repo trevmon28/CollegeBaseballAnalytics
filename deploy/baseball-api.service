@@ -1,0 +1,15 @@
+[Unit]
+Description=Baseball Prediction REST API
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/baseball
+EnvironmentFile=/opt/baseball/.env
+ExecStart=/opt/baseball/venv/bin/uvicorn api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
