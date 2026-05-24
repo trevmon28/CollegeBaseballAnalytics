@@ -1,0 +1,17 @@
+[Unit]
+Description=Baseball MCP Server (HTTP / remote Claude.ai)
+After=network.target baseball-api.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/baseball
+Environment=MCP_TRANSPORT=http
+Environment=MCP_PORT=9000
+EnvironmentFile=/opt/baseball/.env
+ExecStart=/opt/baseball/venv/bin/python mcp_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

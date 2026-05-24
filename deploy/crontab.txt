@@ -1,0 +1,5 @@
+# Baseball Analytics — daily pipeline cron job
+# Add to VPS crontab with:  crontab -e
+# Then paste this line (runs daily_runner.py at 8:00 AM server time):
+
+0 8 * * * cd /opt/baseball && /opt/baseball/venv/bin/python daily_runner.py >> data/daily_log.txt 2>&1

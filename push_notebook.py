@@ -5,15 +5,15 @@ Before running:
   2. Update commit_message below
 Then: python push_notebook.py
 """
-import base64, json, subprocess, sys
+import base64, json, subprocess
 
 REPO      = "trevmon28/CollegeBaseballAnalytics"
 FILEPATH  = "CollegeBaseballAnalytics_Master.ipynb"
 LOCAL     = r"C:\Users\trevm\Projects\CFBBaseballAnalytics\CollegeBaseballAnalytics_Master.ipynb"
 
 # ── UPDATE THESE BEFORE EACH PUSH ─────────────────────────────────────────────
-SHA            = "REPLACE_WITH_CURRENT_SHA"   # gh api repos/.../contents/... --jq '.sha'
-commit_message = "Update college baseball analytics notebook"
+SHA            = "3689d0322ece37e40d9e12ad949d92557db3b1f9"
+commit_message = "Add ATS spread market to best_bets(); unified ML+ATS table sorted by EV"
 # ─────────────────────────────────────────────────────────────────────────────
 
 token = subprocess.check_output(["gh", "auth", "token"], text=True).strip()

@@ -5,3 +5,6 @@ __pycache__/
 *.csv
 *.json.bak
 .env
+*.pkl
+daily_log.txt
+run_meta.json
