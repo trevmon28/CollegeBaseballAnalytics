@@ -29,6 +29,30 @@ _ODDS_TO_ESPN = {
     'Long Beach St':                'Long Beach State Dirtbags',
     'Sacramento St Hornets':        'Sacramento State Hornets',
     'Southern Utah':                'Southern Utah Thunderbirds',
+    # Short-name traps: bare state names that must not fuzzy-match the wrong team
+    'Texas':                        'Texas Longhorns',
+    'Kansas':                       'Kansas Jayhawks',
+    'Arkansas':                     'Arkansas Razorbacks',
+    'Alabama':                      'Alabama Crimson Tide',
+    'Florida':                      'Florida Gators',
+    'Georgia':                      'Georgia Bulldogs',
+    'Tennessee':                    'Tennessee Volunteers',
+    'Missouri':                     'Missouri Tigers',
+    'Oregon':                       'Oregon Ducks',
+    'Arizona':                      'Arizona Wildcats',
+    'Colorado':                     'Colorado Buffaloes',
+}
+
+# Nickname → canonical mapping for common shorthand queries
+_NICKNAME_MAP = {
+    'longhorns':   'Texas Longhorns',
+    'razorbacks':  'Arkansas Razorbacks',
+    'crimson tide':'Alabama Crimson Tide',
+    'gators':      'Florida Gators',
+    'bulldogs':    None,  # ambiguous — fall through to fuzzy
+    'aggies':      None,  # ambiguous
+    'tigers':      None,  # ambiguous
+    'wildcats':    None,  # ambiguous
 }
 
 
@@ -39,18 +63,30 @@ def _norm(name: str) -> str:
     return name
 
 
+def _first_word(name: str) -> str:
+    return name.strip().split()[0].lower()
+
+
 def resolve_team(name: str, candidates: list[str]) -> tuple[str | None, list[str]]:
     """
     Resolve a team name to the exact canonical display name.
     Returns (resolved_name, suggestions).
     resolved_name is None if no match found; suggestions lists close alternatives.
+
+    Ambiguity rule: if the query could match multiple teams that share the same
+    first word (e.g. "Texas" → Texas Longhorns AND Texas State Bobcats AND Texas
+    A&M Aggies), the override table wins; otherwise the shortest/most-common match
+    is preferred and the rest are returned as suggestions so the caller can surface
+    a disambiguation error.
     """
     if not isinstance(name, str) or not name.strip():
         return None, []
 
-    # 1. Direct Odds API override
+    # 1. Direct Odds API / short-name override (highest priority)
     if name in _ODDS_TO_ESPN:
         return _ODDS_TO_ESPN[name], []
+    if name.strip() in _ODDS_TO_ESPN:
+        return _ODDS_TO_ESPN[name.strip()], []
 
     # 2. Exact case-insensitive match
     name_lower = name.strip().lower()
@@ -64,7 +100,26 @@ def resolve_team(name: str, candidates: list[str]) -> tuple[str | None, list[str
     if name_norm in norm_map:
         return norm_map[name_norm], []
 
-    # 4. Fuzzy match on normalized names
+    # 4. Ambiguity guard: single bare word that matches multiple teams by first word
+    #    (the Texas/Texas State trap) — refuse rather than guess.
+    query_first = _first_word(name)
+    if len(name.strip().split()) == 1:
+        first_word_hits = [c for c in candidates if _first_word(c) == query_first]
+        if len(first_word_hits) > 1:
+            return None, sorted(first_word_hits)
+
+    # 5. Prefix match: the query is a leading substring of exactly one candidate
+    #    (e.g. "Texas Tech" → "Texas Tech Red Raiders").
+    #    If multiple candidates share the prefix, pick the shortest (most specific).
+    prefix_hits = [c for c in candidates if _norm(c).startswith(name_norm + " ") or _norm(c) == name_norm]
+    if len(prefix_hits) == 1:
+        return prefix_hits[0], []
+    if len(prefix_hits) > 1:
+        # Ambiguous prefix — return the shortest match and suggest the rest
+        prefix_hits.sort(key=lambda c: len(c))
+        return prefix_hits[0], prefix_hits[1:]
+
+    # 6. Fuzzy match on normalized names
     matches = _difflib.get_close_matches(name_norm, norm_map.keys(), n=5, cutoff=0.72)
     if matches:
         return norm_map[matches[0]], [norm_map[m] for m in matches[1:]]
