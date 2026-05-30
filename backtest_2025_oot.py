@@ -60,9 +60,49 @@ print("\nBuilding training stats + Elo…")
 train_stats = compute_stats(games_train)
 train_elo   = compute_elo(games_train)
 
-print("Training model on 2021-2024…")
-clf, feats = train_model(games_train, train_stats)
+print("Training uncalibrated model on 2021-2024…")
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+# Build raw feature matrix once so both models use identical rows
+from daily_runner import FEAT_COLS
+idx_tr  = train_stats.set_index(["team", "season"])
+feat_cols = [c for c in FEAT_COLS if c in train_stats.columns]
+diff_feats = [f"d_{c}" for c in feat_cols] + ["is_home", "neutral"]
+tr_rows = []
+for _, g in games_train.iterrows():
+    yr = int(g["season"])
+    ht, at = g["home_team"], g["away_team"]
+    hk, ak = (ht, yr), (at, yr)
+    if hk not in idx_tr.index or ak not in idx_tr.index:
+        continue
+    hf, af = idx_tr.loc[hk, feat_cols], idx_tr.loc[ak, feat_cols]
+    row = {"is_home": 1, "neutral": int(g.get("neutral", False)),
+           "win": int(g["home_score"] > g["away_score"])}
+    for c in feat_cols:
+        row[f"d_{c}"] = hf.get(c, np.nan) - af.get(c, np.nan)
+    tr_rows.append(row)
+gm_tr = pd.DataFrame(tr_rows).dropna()
+feats = [c for c in diff_feats if c in gm_tr.columns]
+X_tr, y_tr = gm_tr[feats].values, gm_tr["win"].values
+
+base_pipe = make_pipeline(
+    StandardScaler(),
+    LogisticRegression(C=1.0, max_iter=1000, random_state=42),
+)
+clf_raw = make_pipeline(StandardScaler(),
+                        LogisticRegression(C=1.0, max_iter=1000, random_state=42))
+clf_raw.fit(X_tr, y_tr)
+
+print("Training isotonic-calibrated model (5-fold CV) on 2021-2024…")
+clf_cal = CalibratedClassifierCV(base_pipe, method="isotonic", cv=5)
+clf_cal.fit(X_tr, y_tr)
 print(f"  Features: {feats}")
+
+# Use the calibrated model as the production model going forward
+clf = clf_cal
 
 # Elo lookup (end-of-2024 ratings) used for 2025 predictions
 elo_lk = train_elo.set_index("team")["elo"]
@@ -86,17 +126,17 @@ for _, g in games_test.iterrows():
     is_neutral = int(bool(g.get("neutral", False)))
     home_adv   = 0 if is_neutral else ELO_HOME
 
-    # Model win probability
+    # Build feature vector
     feat_row = {"is_home": 1 - is_neutral, "neutral": is_neutral}
     for c in feat_base:
         hval = hf[c] if c in hf.index else np.nan
         aval = af[c] if c in af.index else np.nan
-        # Fill NaN with 0 (league-average diff) — same as production
         feat_row[f"d_{c}"] = float(0 if (pd.isna(hval) or pd.isna(aval))
                                    else hval - aval)
-    X = np.array([[feat_row.get(f, 0) for f in feats]], dtype=float)
-    X = np.nan_to_num(X, nan=0.0)
-    wp_model = float(clf.predict_proba(X)[0, 1])
+    X = np.nan_to_num(
+        np.array([[feat_row.get(f, 0) for f in feats]], dtype=float), nan=0.0)
+    wp_raw = float(clf_raw.predict_proba(X)[0, 1])   # uncalibrated
+    wp_cal = float(clf_cal.predict_proba(X)[0, 1])   # isotonic-calibrated
 
     # ERA-adjusted Elo win probability (baseline)
     era_h  = float(-ERA_ELO_SCALE * hf.get("avg_runs_allowed_z", 0))
@@ -105,20 +145,22 @@ for _, g in games_test.iterrows():
     elo_a  = elo_lk.get(away, ELO_INIT) + era_a
     wp_elo = 1.0 / (1.0 + 10 ** ((elo_a - elo_h) / 400))
 
-    # Blended (same blend used in production)
-    wp_blend = 0.6 * wp_model + 0.4 * wp_elo
+    # Two blended outputs: raw and calibrated
+    wp_blend_raw = 0.6 * wp_raw + 0.4 * wp_elo
+    wp_blend_cal = 0.6 * wp_cal + 0.4 * wp_elo
 
     home_won = bool(g["home_score"] > g["away_score"])
     rows.append({
-        "date":       g["date"],
-        "home":       home,
-        "away":       away,
-        "neutral":    bool(is_neutral),
-        "home_won":   home_won,
-        "wp_model":   wp_model,
-        "wp_elo":     wp_elo,
-        "wp_blend":   wp_blend,
-        # Elo favorite flag: home team is Elo favourite?
+        "date":          g["date"],
+        "home":          home,
+        "away":          away,
+        "neutral":       bool(is_neutral),
+        "home_won":      home_won,
+        "wp_raw":        wp_raw,
+        "wp_cal":        wp_cal,
+        "wp_elo":        wp_elo,
+        "wp_blend_raw":  wp_blend_raw,
+        "wp_blend_cal":  wp_blend_cal,
         "elo_favors_home": elo_lk.get(home, ELO_INIT) + home_adv > elo_lk.get(away, ELO_INIT),
     })
 
@@ -137,32 +179,39 @@ except ImportError:
 
 y_true = df["home_won"].astype(int).values
 
-brier_blend = np.mean((df["wp_blend"] - y_true) ** 2)
-brier_elo   = np.mean((df["wp_elo"]   - y_true) ** 2)
+brier_raw   = np.mean((df["wp_blend_raw"] - y_true) ** 2)
+brier_cal   = np.mean((df["wp_blend_cal"] - y_true) ** 2)
+brier_elo   = np.mean((df["wp_elo"]       - y_true) ** 2)
 brier_naive = np.mean((np.full(len(y_true), 0.5) - y_true) ** 2)
 
 if HAS_SKLEARN:
-    auc_blend = roc_auc_score(y_true, df["wp_blend"])
-    auc_elo   = roc_auc_score(y_true, df["wp_elo"])
-    ll_blend  = log_loss(y_true, df[["wp_blend"]].assign(p0=lambda x: 1 - x["wp_blend"])[["p0","wp_blend"]].values)
-    ll_elo    = log_loss(y_true, df[["wp_elo"]].assign(p0=lambda x: 1 - x["wp_elo"])[["p0","wp_elo"]].values)
+    auc_raw = roc_auc_score(y_true, df["wp_blend_raw"])
+    auc_cal = roc_auc_score(y_true, df["wp_blend_cal"])
+    auc_elo = roc_auc_score(y_true, df["wp_elo"])
 
-acc_blend = (((df["wp_blend"] > 0.5) == df["home_won"])).mean()
-acc_elo   = (((df["wp_elo"]   > 0.5) == df["home_won"])).mean()
+acc_raw = ((df["wp_blend_raw"] > 0.5) == df["home_won"]).mean()
+acc_cal = ((df["wp_blend_cal"] > 0.5) == df["home_won"]).mean()
+acc_elo = ((df["wp_elo"]       > 0.5) == df["home_won"]).mean()
 
 # ----------------------------------------------------------------------------─
-# 5. Calibration curve: predicted bucket vs actual win rate
+# 5. Reliability curves: raw vs calibrated, bucketed by predicted probability
 # ----------------------------------------------------------------------------─
-bins = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 1.01]
+bins   = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 1.01]
 labels = ["45-50", "50-55", "55-60", "60-65", "65-70", "70-75", "75-80", "80+"]
 
-df["bucket"] = pd.cut(df["wp_blend"], bins=bins, labels=labels, right=False)
+df["bucket_raw"] = pd.cut(df["wp_blend_raw"], bins=bins, labels=labels, right=False)
+df["bucket_cal"] = pd.cut(df["wp_blend_cal"], bins=bins, labels=labels, right=False)
 
-calib = (df.groupby("bucket", observed=True)
-           .agg(n=("home_won", "count"),
-                actual_win=("home_won", "mean"),
-                avg_pred=("wp_blend", "mean"))
-           .reset_index())
+def reliability(df, pred_col, bucket_col):
+    return (df.groupby(bucket_col, observed=True)
+              .agg(n=("home_won","count"),
+                   actual=("home_won","mean"),
+                   pred=(pred_col,"mean"))
+              .reset_index()
+              .rename(columns={bucket_col: "bucket"}))
+
+calib_raw = reliability(df, "wp_blend_raw", "bucket_raw")
+calib_cal = reliability(df, "wp_blend_cal", "bucket_cal")
 
 # ----------------------------------------------------------------------------─
 # 6. P&L simulation across confidence bands + line assumptions
@@ -190,8 +239,8 @@ def build_bets(df, line, edge_min=EDGE_MIN, conf_min=CONF_MIN):
     records = []
     for _, r in df.iterrows():
         for side, wp, won in [
-            ("home", r["wp_blend"],     r["home_won"]),
-            ("away", 1-r["wp_blend"],   not r["home_won"]),
+            ("home", r["wp_blend_cal"],     r["home_won"]),
+            ("away", 1-r["wp_blend_cal"],   not r["home_won"]),
         ]:
             if wp < conf_min:
                 continue
@@ -257,25 +306,28 @@ print(SEP)
 print(f"\n  Games evaluated:  {len(df):,}")
 
 print(f"\n  -- CALIBRATION ------------------------------------------")
-print(f"  {'Metric':<28} {'Blend':>10} {'Elo-only':>10} {'Naive':>10}")
-print(f"  {'-'*58}")
-print(f"  {'Brier Score (lower=better)':<28} {brier_blend:>10.4f} {brier_elo:>10.4f} {brier_naive:>10.4f}")
-print(f"  {'Accuracy (>50% threshold)':<28} {acc_blend:>10.1%} {acc_elo:>10.1%} {'50.0%':>10}")
+print(f"  {'Metric':<28} {'Raw blend':>10} {'Cal blend':>10} {'Elo-only':>10} {'Naive':>10}")
+print(f"  {'-'*68}")
+print(f"  {'Brier Score (lower=better)':<28} {brier_raw:>10.4f} {brier_cal:>10.4f} {brier_elo:>10.4f} {brier_naive:>10.4f}")
+print(f"  {'Accuracy (>50%)':<28} {acc_raw:>10.1%} {acc_cal:>10.1%} {acc_elo:>10.1%} {'50.0%':>10}")
 if HAS_SKLEARN:
-    print(f"  {'ROC-AUC':<28} {auc_blend:>10.4f} {auc_elo:>10.4f} {'0.5000':>10}")
+    print(f"  {'ROC-AUC':<28} {auc_raw:>10.4f} {auc_cal:>10.4f} {auc_elo:>10.4f} {'0.5000':>10}")
+print(f"  Note: AUC is unchanged by calibration — it only rescales probabilities,")
+print(f"  not their rank order. Brier improvement = better probability estimates.")
 
-print(f"\n  -- RELIABILITY (blended model) --------------------------")
-print(f"  {'Bucket':<10} {'Count':>7} {'Pred%':>7} {'Actual%':>8} {'Gap':>7}")
-print(f"  {'-'*44}")
-for _, row in calib.iterrows():
-    if row["n"] == 0:
-        continue
-    gap = row["actual_win"] - row["avg_pred"]
-    marker = "  ◄ underestimates" if gap >  0.04 else \
-             "  ◄ overestimates"  if gap < -0.04 else ""
-    print(f"  {str(row['bucket']):<10} {int(row['n']):>7,} "
-          f"{row['avg_pred']:>7.1%} {row['actual_win']:>8.1%} "
-          f"{gap:>+7.1%}{marker}")
+print(f"\n  -- RELIABILITY: RAW vs CALIBRATED (blended) ------------")
+print(f"  {'Bucket':<9} {'N':>5}   {'RawPred':>7} {'Actual':>7} {'RawGap':>7}  |  {'CalPred':>7} {'CalGap':>7}")
+print(f"  {'-'*62}")
+merged = calib_raw.merge(calib_cal, on="bucket", suffixes=("_r","_c"))
+for _, r in merged.iterrows():
+    gap_r = r["actual_r"] - r["pred_r"]
+    gap_c = r["actual_c"] - r["pred_c"]
+    flag  = "  << FIXED" if abs(gap_r) > 0.04 and abs(gap_c) <= 0.04 else \
+            "  << improved" if abs(gap_r) > 0.04 and abs(gap_c) < abs(gap_r) else \
+            "  << still off" if abs(gap_c) > 0.04 else ""
+    print(f"  {str(r['bucket']):<9} {int(r['n_r']):>5}   "
+          f"{r['pred_r']:>7.1%} {r['actual_r']:>7.1%} {gap_r:>+7.1%}  |  "
+          f"{r['pred_c']:>7.1%} {gap_c:>+7.1%}{flag}")
 
 print(f"\n  -- P&L SIMULATION (flat ${FLAT_BET:.0f}/game, edge>{EDGE_MIN:.0%}, wp>{CONF_MIN:.0%}) -------")
 print(f"  * Lines are simulated — no actual 2025 closing lines stored *")

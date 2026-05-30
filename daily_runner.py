@@ -421,6 +421,7 @@ def generate_static_dashboard(rankings, bets, year):
 
 # ── step 3: train logistic regression classifier ───────────────────────────────
 def train_model(games, team_stats):
+    from sklearn.calibration import CalibratedClassifierCV
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
@@ -446,11 +447,13 @@ def train_model(games, team_stats):
         rows.append(row)
     gm = pd.DataFrame(rows).dropna()
     feats = [c for c in diff_feats if c in gm.columns]
-    # Train on full dataset — logistic regression has negligible overfitting risk
-    clf = make_pipeline(
+    base = make_pipeline(
         StandardScaler(),
         LogisticRegression(C=1.0, max_iter=1000, random_state=42),
     )
+    # Isotonic calibration via 5-fold CV — fixes non-monotonic over-confidence
+    # in the 55-60% bucket without touching the training data directly.
+    clf = CalibratedClassifierCV(base, method="isotonic", cv=5)
     clf.fit(gm[feats].values, gm["win"].values)
     return clf, feats
 
