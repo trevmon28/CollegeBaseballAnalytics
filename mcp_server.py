@@ -179,7 +179,9 @@ async def predict_game(
             return "Validation error: " + "; ".join(msgs)
         if isinstance(detail, dict) and "suggestions" in detail:
             sugg = ", ".join(detail["suggestions"][:5])
-            return f"Unknown team '{detail.get('team', '?')}'. Did you mean: {sugg}?"
+            team_name = detail.get("team", "?")
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Unknown team '{team_name}'.{hint}"
         return f"Validation error: {detail}"
     if r.status_code == 503:
         return "Model not loaded — run daily_runner.py first."
@@ -221,7 +223,9 @@ async def get_team_predictions(team: str) -> str:
         detail = r.json().get("detail", {})
         if isinstance(detail, dict) and "suggestions" in detail:
             sugg = ", ".join(detail["suggestions"][:5])
-            return f"Team '{team}' not found. Did you mean: {sugg}?"
+            team_name = detail.get("team", team)
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"No predictions found for '{team}'."
     if r.status_code != 200:
         return _http_error(r)
@@ -258,6 +262,11 @@ async def get_team_profile(team: str) -> str:
 
     if r.status_code == 404:
         detail = r.json().get("detail", "")
+        if isinstance(detail, dict) and "suggestions" in detail:
+            sugg = ", ".join(detail["suggestions"][:5])
+            team_name = detail.get("team", team)
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"Team not found: {detail}"
     if r.status_code != 200:
         return _http_error(r)
@@ -316,6 +325,11 @@ async def compare_teams(
 
     if r.status_code == 404:
         detail = r.json().get("detail", "")
+        if isinstance(detail, dict) and "suggestions" in detail:
+            sugg = ", ".join(detail["suggestions"][:5])
+            team_name = detail.get("team", "?")
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"Team not found: {detail}"
     if r.status_code != 200:
         return _http_error(r)

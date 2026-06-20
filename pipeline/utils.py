@@ -29,6 +29,11 @@ _ODDS_TO_ESPN = {
     'Long Beach St':                'Long Beach State Dirtbags',
     'Sacramento St Hornets':        'Sacramento State Hornets',
     'Southern Utah':                'Southern Utah Thunderbirds',
+    # UAlbany: two source names (sportsdataverse 2021-23 vs ESPN 2024+) unified here
+    'UAlbany':                      'UAlbany Great Danes',
+    'Albany Great Danes':           'UAlbany Great Danes',
+    'University at Albany':         'UAlbany Great Danes',
+    'SUNY Albany':                  'UAlbany Great Danes',
     # Short-name traps: bare state names that must not fuzzy-match the wrong team
     'Texas':                        'Texas Longhorns',
     'Kansas':                       'Kansas Jayhawks',
@@ -41,6 +46,40 @@ _ODDS_TO_ESPN = {
     'Oregon':                       'Oregon Ducks',
     'Arizona':                      'Arizona Wildcats',
     'Colorado':                     'Colorado Buffaloes',
+    # LSU / Louisiana-family aliases (common LLM input patterns)
+    'LSU':                              'LSU Tigers',
+    'Louisiana State':                  'LSU Tigers',
+    'Louisiana State University':       'LSU Tigers',
+    "Louisiana Ragin Cajuns":           "Louisiana Ragin' Cajuns",
+    'UL Lafayette':                     "Louisiana Ragin' Cajuns",
+    'Louisiana Lafayette':              "Louisiana Ragin' Cajuns",
+    # "University of X" → canonical forms (common LLM input patterns)
+    'University of Alabama':            'Alabama Crimson Tide',
+    'University of Arizona':            'Arizona Wildcats',
+    'University of Arkansas':           'Arkansas Razorbacks',
+    'University of Colorado':           'Colorado Buffaloes',
+    'University of Florida':            'Florida Gators',
+    'University of Georgia':            'Georgia Bulldogs',
+    'University of Kansas':             'Kansas Jayhawks',
+    'University of Kentucky':           'Kentucky Wildcats',
+    'University of Miami':              'Miami Hurricanes',
+    'University of Mississippi':        'Ole Miss Rebels',
+    'University of Missouri':           'Missouri Tigers',
+    'University of North Carolina':     'North Carolina Tar Heels',
+    'University of Oklahoma':           'Oklahoma Sooners',
+    'University of Oregon':             'Oregon Ducks',
+    'University of South Carolina':     'South Carolina Gamecocks',
+    'University of Tennessee':          'Tennessee Volunteers',
+    'University of Texas':              'Texas Longhorns',
+    'University of Virginia':           'Virginia Cavaliers',
+    # Nickname / abbreviation shorthand
+    'Ole Miss':                         'Ole Miss Rebels',
+    'Miss State':                       'Mississippi State Bulldogs',
+    'TCU':                              'TCU Horned Frogs',
+    'BYU':                              'BYU Cougars',
+    'UCF':                              'UCF Knights',
+    'Cal':                              'California Golden Bears',
+    'UC Berkeley':                      'California Golden Bears',
 }
 
 # Nickname → canonical mapping for common shorthand queries

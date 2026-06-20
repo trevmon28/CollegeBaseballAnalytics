@@ -114,10 +114,101 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T027 Write `tests/test_api.py` using `httpx.AsyncClient` with `pytest` fixtures: temp `data/` dir with minimal valid artifacts (tiny serialized sklearn model, one-row CSV, valid `run_meta.json`); cover happy path + 404 + 422 + 503 for all 6 endpoints
+- [x] T027 Write `tests/test_api.py` using `httpx.AsyncClient` with `pytest` fixtures — 31 tests, all passing
 - [ ] T028 [P] Verify `/openapi.json` accuracy: `curl http://localhost:8000/openapi.json` and confirm all 6 endpoints, all request/response schemas, and correct status codes are present
 - [ ] T029 [P] Verify hot-reload: touch `data/run_meta.json` with a new `run_date`, wait ≤60s, confirm `GET /health` reflects the new date without restarting the server
 - [ ] T030 Update `quickstart.md` with any corrections discovered during smoke testing
+
+---
+
+## Phase 9: Model Enhancement
+
+**Goal**: Improve probability calibration and discrimination by switching to logistic regression
+and enriching features with pitcher-level data. Diagnostic (2026-05-17) showed XGBoost offers
+no AUC advantage over logistic regression (0.7585 vs 0.7600) and has worse Brier score —
+the bottleneck is features, not model complexity.
+
+- [x] T031 Replace XGBoost with `LogisticRegression(C=1.0)` in `daily_runner.py`: swap `train_model()`, update `model.pkl` bundle key `clf` (interface unchanged), re-run `daily_runner.py` and verify AUC ≥ 0.758 and Brier ≤ 0.192 via `diagnostics.py`
+- [x] T032 Pull starting-pitcher stats from ESPN box scores into `pull_pitching_stats.py`: aggregate to team-season `k_per_game`, `bb_per_game`, `k_bb_ratio`; save to `data/team_pitching_stats_YYYY.parquet`
+- [x] T033 Add pitching K/BB differential features to feature matrix in `daily_runner.py`: `d_k_per_game`, `d_bb_per_game`, `d_k_bb_ratio`; fill 0 when pitcher data unavailable (backward compat)
+- [x] T034 Pull team-level batting (BA, OBP) and pitching ERA/WHIP from ESPN box scores: `pull_batting_stats.py` → `data/team_adv_stats_YYYY.parquet`; `daily_runner.py` merges `ba`, `obp`, `era`, `whip` into `FEAT_COLS` with 0-fallback when missing
+- [ ] T035 Pull historical stats for all training years then re-run diagnostics; target AUC ≥ 0.780, Brier ≤ 0.185; **baseline (2026-05-18): LR AUC=0.757, Brier=0.194** — gap requires historical pull:
+  ```
+  python pull_pitching_stats.py --seasons 2021 2022 2023 2024 2025   # ~50 min
+  python pull_batting_stats.py  --seasons 2021 2022 2023 2024 2025   # ~50 min
+  python daily_runner.py                                               # retrain
+  python diagnostics.py                                                # verify
+  ```
+  Results documented in `specs/diagnostics_log.md`
+
+**Checkpoint**: `diagnostics.py` shows AUC ≥ 0.780, Brier ≤ 0.185, train-test gap < 0.015.
+
+---
+
+## Phase 11: Team Profile & Comparison API
+
+**Goal**: Expose the full model knowledge — every stat, rating, and ranking the pipeline computes —
+through queryable endpoints so teams can be browsed, profiled, and directly compared. Enables
+natural-language queries like "Who is the best pitching team?" and "Compare Texas vs LSU" from
+Claude Desktop.
+
+- [x] T041 Add `rankings_df` and `elo_df` fields to `AppState` in `api.py`; update `load_artifacts()` to load `rankings.parquet` and `elo_ratings.parquet` from `DATA_DIR`
+- [x] T042 Add `TeamProfile` Pydantic response model to `api.py`: all stat columns from `rankings.parquet` (rank, conference, wins, losses, win_pct, pythagorean_win_pct, avg_runs_scored, avg_runs_allowed, avg_run_diff, recent_win_pct, elo, avg_opp_elo, runs_scored_std, runs_allowed_std, shutout_pct, close_win_pct, k_per_game, bb_per_game, k_bb_ratio, power_score); add `TeamListResponse` and `TeamComparison` models
+- [x] T043 Implement `GET /teams` in `api.py`: return all teams for `season` (default `TEST_YEAR`); support `conference`, `min_games`, `sort_by` query params; source from `rankings_df` for current year else `team_stats_df`
+- [x] T044 Implement `GET /teams/{team}` in `api.py`: resolve team name (fuzzy), return full `TeamProfile`; prefer `rankings_df` (has rank + elo), fall back to `team_stats_df`
+- [x] T045 Implement `GET /teams/{team}/compare/{other_team}` in `api.py`: resolve both teams, return `TeamComparison` with both `TeamProfile` objects, key stat differentials dict, and an embedded `GamePrediction`; refactor inner predict logic into `_predict_matchup()` helper shared with `POST /predict`
+- [x] T046 Add `get_team_profile(team)` and `compare_teams(team_a, team_b, neutral?)` tools to `mcp_server.py`
+
+**Checkpoint**: `GET /teams` returns ranked list; `GET /teams/Texas` returns full profile; `GET /teams/Texas/compare/LSU` returns side-by-side stats + prediction. Claude Desktop can answer "Who has the best pitching?" and "Compare Texas and LSU."
+
+---
+
+## Phase 10: MCP Server
+
+**Goal**: Expose the prediction API as Claude tools so the user can query predictions,
+run game predictions, and check pipeline health via natural language in Claude Desktop or Claude Code.
+
+- [ ] T036 Create `mcp_server.py` at repository root: implement MCP server using `anthropic` SDK with three tools — `get_best_bets(date?, min_edge?)`, `predict_game(home, away, neutral?)`, `check_health()`; each tool calls the local REST API at `http://localhost:8000`
+- [ ] T037 Add `get_team_predictions(team)` tool to MCP server wrapping `GET /teams/{team}/predictions`
+- [ ] T038 Add `get_model_meta()` tool to MCP server wrapping `GET /meta`
+- [ ] T039 Register MCP server in Claude Desktop config (`claude_desktop_config.json`): add entry under `mcpServers` pointing to `mcp_server.py` with `python` command
+- [ ] T040 Smoke test: open Claude Desktop, ask "What are today's best bets?" and "Predict Texas vs LSU" — confirm tool calls fire and responses are readable plain English
+
+**Checkpoint**: Natural language questions in Claude Desktop trigger correct API calls and return formatted answers.
+
+---
+
+## Phase 12: Post-Update Regression & Validation Testing
+
+**Goal**: Automatically verify pipeline integrity after every daily runner execution and model update, so regressions are caught before bad data reaches the API or MCP server.
+
+**Trigger points**: run after `daily_runner.py` completes, and on-demand via `pytest tests/ -m post_update`.
+
+### T047 — Pipeline Artifact Validation
+
+- [ ] T047 [P] Add `tests/test_post_update.py`: fixture loads `run_meta.json` and validates freshness (`run_date == today`), `teams_ranked >= 300`, `games_loaded > 30000`, and all expected feature keys present in `run_meta["features"]`; mark tests with `@pytest.mark.post_update`
+
+### T048 — Model Sanity Checks
+
+- [ ] T048 [P] Add model sanity tests to `tests/test_post_update.py`: load `model.pkl`, assert `clf` key present, assert `feats` list length matches `run_meta["features"]` length, assert `clf.predict_proba` returns shape `(1, 2)` for a dummy feature vector of correct length, assert probabilities sum to 1.0 ± 0.001
+
+### T049 — API Regression Suite (post-reload)
+
+- [ ] T049 Add `tests/test_api_regression.py` using `httpx.AsyncClient` (live server required, skip if unreachable): after each runner run, hit all 6 endpoints and assert: `/health` → `is_fresh=True` and `model_loaded=True`; `/predictions` → 200 or 404 (no 5xx); `POST /predict` with known teams → `home_wp + away_wp` rounds to 1.0; `/teams` → list non-empty; `/meta` → `model_version == today`; mark with `@pytest.mark.regression`
+
+### T050 — MCP Server Tool Smoke Tests
+
+- [ ] T050 [P] Add `tests/test_mcp_smoke.py`: import `mcp_server` tools directly (bypass HTTP), call `check_health()` and assert returns string containing `"fresh"` or `"stale"`; call `get_best_bets()` and assert result is a non-empty string or "no bets"; call `predict_game("Texas", "LSU")` and assert result contains a probability; mark `@pytest.mark.mcp`
+
+### T051 — Scheduler Miss Detection
+
+- [ ] T051 Add `tests/test_scheduler_health.py`: read `run_meta.json` and assert `run_date` is within the last 2 calendar days; if stale, print actionable message: `"Pipeline is stale — run: python daily_runner.py"` and fail with exit code 1; wire this test into a lightweight cron check (`schtasks /create ... /sc daily /st 09:00`) that emails or logs on failure
+
+### T052 — Post-Update Pytest Hook in daily_runner.py
+
+- [ ] T052 Add a final step in `daily_runner.py` after VPS sync: run `subprocess.run(["pytest", "tests/", "-m", "post_update", "-q", "--tb=short"])`, log pass/fail count to `daily_log.txt`; do not fail the runner on test failure — log a warning instead so the pipeline always completes
+
+**Checkpoint**: After `daily_runner.py` completes, `tests/test_post_update.py` passes automatically and any artifact/model regression is logged within the same run. `/health` and model state are verified fresh before MCP tools serve data.
 
 ---
 

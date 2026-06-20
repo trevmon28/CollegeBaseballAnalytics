@@ -56,6 +56,14 @@ CANDIDATES = [
     "East Carolina Pirates",
     "USC Upstate Spartans",
     "UCLA Bruins",
+    "Louisiana Ragin' Cajuns",
+    "TCU Horned Frogs",
+    "BYU Cougars",
+    "California Golden Bears",
+    "Miami Hurricanes",
+    "Oklahoma Sooners",
+    "Kentucky Wildcats",
+    "Virginia Cavaliers",
 ]
 
 
@@ -233,3 +241,119 @@ def test_matchup_teams_resolve_correctly(home_query, away_query, expected_home, 
     assert away_result == expected_away, (
         f"Away: resolve_team({away_query!r}) → {away_result!r}, expected {expected_away!r}"
     )
+
+
+# ── LSU / Louisiana-family aliases ────────────────────────────────────────────
+
+def test_lsu_abbreviation():
+    assert_resolves_to("LSU", "LSU Tigers")
+
+
+def test_louisiana_state_resolves_to_lsu():
+    assert_resolves_to("Louisiana State", "LSU Tigers")
+
+
+def test_louisiana_state_university_resolves_to_lsu():
+    """The classic MCP failure: long-form university name for LSU."""
+    assert_resolves_to("Louisiana State University", "LSU Tigers")
+
+
+def test_louisiana_ragin_cajuns_no_apostrophe():
+    """LLM inputs often omit the apostrophe — must still resolve correctly."""
+    assert_resolves_to("Louisiana Ragin Cajuns", "Louisiana Ragin' Cajuns")
+
+
+def test_ul_lafayette_resolves_correctly():
+    assert_resolves_to("UL Lafayette", "Louisiana Ragin' Cajuns")
+
+
+def test_louisiana_lafayette_resolves_correctly():
+    assert_resolves_to("Louisiana Lafayette", "Louisiana Ragin' Cajuns")
+
+
+# ── "University of X" patterns ────────────────────────────────────────────────
+
+def test_university_of_florida():
+    assert_resolves_to("University of Florida", "Florida Gators")
+
+
+def test_university_of_texas():
+    assert_resolves_to("University of Texas", "Texas Longhorns")
+
+
+def test_university_of_alabama():
+    assert_resolves_to("University of Alabama", "Alabama Crimson Tide")
+
+
+def test_university_of_georgia():
+    assert_resolves_to("University of Georgia", "Georgia Bulldogs")
+
+
+def test_university_of_tennessee():
+    assert_resolves_to("University of Tennessee", "Tennessee Volunteers")
+
+
+def test_university_of_mississippi():
+    assert_resolves_to("University of Mississippi", "Ole Miss Rebels")
+
+
+def test_university_of_arkansas():
+    assert_resolves_to("University of Arkansas", "Arkansas Razorbacks")
+
+
+def test_university_of_south_carolina():
+    assert_resolves_to("University of South Carolina", "South Carolina Gamecocks")
+
+
+def test_university_of_north_carolina():
+    assert_resolves_to("University of North Carolina", "North Carolina Tar Heels")
+
+
+def test_university_of_missouri():
+    assert_resolves_to("University of Missouri", "Missouri Tigers")
+
+
+def test_university_of_kansas():
+    assert_resolves_to("University of Kansas", "Kansas Jayhawks")
+
+
+def test_university_of_oklahoma():
+    assert_resolves_to("University of Oklahoma", "Oklahoma Sooners")
+
+
+def test_university_of_kentucky():
+    assert_resolves_to("University of Kentucky", "Kentucky Wildcats")
+
+
+def test_university_of_virginia():
+    assert_resolves_to("University of Virginia", "Virginia Cavaliers")
+
+
+# ── common abbreviations / nickname shorthand ─────────────────────────────────
+
+def test_ole_miss_shorthand():
+    assert_resolves_to("Ole Miss", "Ole Miss Rebels")
+
+
+def test_miss_state_shorthand():
+    assert_resolves_to("Miss State", "Mississippi State Bulldogs")
+
+
+def test_tcu_abbreviation():
+    assert_resolves_to("TCU", "TCU Horned Frogs")
+
+
+def test_byu_abbreviation():
+    assert_resolves_to("BYU", "BYU Cougars")
+
+
+def test_ucf_abbreviation():
+    assert_resolves_to("UCF", "UCF Knights")
+
+
+def test_cal_resolves_to_golden_bears():
+    assert_resolves_to("Cal", "California Golden Bears")
+
+
+def test_uc_berkeley_resolves_to_golden_bears():
+    assert_resolves_to("UC Berkeley", "California Golden Bears")

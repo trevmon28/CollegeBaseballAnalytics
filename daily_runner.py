@@ -60,6 +60,21 @@ CONF_TIER = {
 }
 CONF_DEFAULT = 0.72
 
+# College World Series is always at Charles Schwab Field, Omaha — no home advantage.
+# Super Regionals (real home sites) end by ~June 9; CWS runs June 13–25.
+CWS_NEUTRAL_START = (6, 13)  # (month, day)
+CWS_NEUTRAL_END   = (6, 26)
+
+
+def _is_cws_neutral(game_date: date) -> bool:
+    """True when game_date falls inside the CWS neutral-site window."""
+    m, d = game_date.month, game_date.day
+    sm, sd = CWS_NEUTRAL_START
+    em, ed = CWS_NEUTRAL_END
+    start_ok = (m, d) >= (sm, sd)
+    end_ok   = (m, d) <= (em, ed)
+    return start_ok and end_ok
+
 TEAM_CONF = {
     'Alabama Crimson Tide':'SEC','Arkansas Razorbacks':'SEC','Auburn Tigers':'SEC',
     'Florida Gators':'SEC','Georgia Bulldogs':'SEC','Kentucky Wildcats':'SEC',
@@ -81,7 +96,9 @@ TEAM_CONF = {
     'Coastal Carolina Chanticleers':'Sun Belt','Georgia Southern Eagles':'Sun Belt',
     'Old Dominion Monarchs':'Sun Belt','James Madison Dukes':'Sun Belt',
     'South Alabama Jaguars':'Sun Belt','Southern Miss Golden Eagles':'Sun Belt',
-    'Troy Trojans':'Sun Belt','East Carolina Pirates':'American Athletic',
+    'Troy Trojans':'Sun Belt',"Louisiana Ragin' Cajuns":'Sun Belt',
+    'Arkansas State Red Wolves':'Sun Belt','Texas State Bobcats':'Sun Belt',
+    'Louisiana Monroe Warhawks':'Sun Belt','Marshall Thundering Herd':'Sun Belt','East Carolina Pirates':'American Athletic',
     'Florida Atlantic Owls':'American Athletic','South Florida Bulls':'American Athletic',
     'Wichita State Shockers':'American Athletic','Rice Owls':'American Athletic',
     'Tulane Green Wave':'American Athletic','UAB Blazers':'American Athletic',
@@ -484,10 +501,14 @@ def fetch_odds(days_ahead: int = ODDS_LOOKAHEAD_DAYS):
     rows = []
     for game in r.json():
         home, away = game["home_team"], game["away_team"]
-        # Neutral site: Odds API doesn't expose this directly; treat any game
-        # where neither team name appears in the venue as potentially neutral.
-        # We mark it False here and let the best_bets caller override if known.
-        neutral = False
+        # Odds API doesn't expose a neutral-site flag. Detect CWS window by
+        # game date: June 13-26 games are at Charles Schwab Field (neutral).
+        commence_str = game.get("commence_time", "")
+        try:
+            game_date = datetime.fromisoformat(commence_str.replace("Z", "+00:00")).date()
+            neutral = _is_cws_neutral(game_date)
+        except (ValueError, AttributeError):
+            neutral = False
         for bkm in game.get("bookmakers", [])[:1]:
             for mkt in bkm.get("markets", []):
                 if mkt["key"] == "h2h":
