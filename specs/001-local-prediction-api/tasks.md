@@ -212,6 +212,54 @@ run game predictions, and check pipeline health via natural language in Claude D
 
 ---
 
+## Phase 13: Auto-Commit on Model Improvement
+
+**Goal**: When `daily_runner.py` retrains the model and the new model outperforms the previous one on the held-out validation set (by AUC or Brier score), automatically commit the updated artifacts and deploy to the VPS — creating a fully automatic improvement loop.
+
+**Definition of improvement**: New model is considered better if EITHER:
+- AUC (validation set) improves by ≥ 0.002 over the stored baseline, OR
+- Brier score improves by ≥ 0.002 (lower is better)
+
+Both metrics are computed on a fixed held-out slice (last calendar year of training data, never the live season).
+
+### T053 — Baseline Metrics Store
+
+- [ ] T053 Add `data/model_baseline.json` written by `daily_runner.py` on every successful train: `{"auc": float, "brier": float, "features": [...], "trained_at": "ISO8601", "git_sha": str}`. First run creates it if absent (bootstrap). Structure mirrors `run_meta.json` so it can be served by `GET /meta` without a new endpoint.
+
+### T054 — Improvement Detection in daily_runner.py
+
+- [ ] T054 Add `_evaluate_improvement(new_auc, new_brier) -> bool` in `daily_runner.py`: load `data/model_baseline.json`; return `True` if `new_auc - prev_auc >= 0.002` OR `prev_brier - new_brier >= 0.002`; return `True` always if baseline file is absent (first run). Log the delta and verdict to `daily_log.txt`.
+
+### T055 — Held-Out Validation Split
+
+- [ ] T055 Add `_held_out_metrics(clf, feats, X, y, season_col) -> dict` in `daily_runner.py`: split the training frame by season — train on all years except the most recent training year, evaluate on the most recent training year (never 2025 live data). Returns `{"auc": float, "brier": float, "n_eval": int}`. Called immediately after `train_model()` completes.
+
+### T056 — Auto-Commit and Push
+
+- [ ] T056 Add `_auto_commit_improvement(metrics: dict)` in `daily_runner.py` (runs only when `_evaluate_improvement()` returns `True`):
+  1. Stage `data/model_baseline.json` and `data/model.pkl` with `git add`
+  2. Commit with message: `"chore(model): auto-improve AUC={auc:.4f} Brier={brier:.4f} [{date}]"`
+  3. Push to `origin` current branch via `git push`
+  4. Log outcome to `daily_log.txt`
+  
+  Failures (no git, no remote, push rejected) are caught and logged — they must never abort the rest of the pipeline.
+
+### T057 — Deploy Improved Model to VPS
+
+- [ ] T057 Extend `_auto_commit_improvement()`: after a successful push, call `sync_data_to_vps()` (already exists) to SFTP the updated `model.pkl` and `model_baseline.json` to the VPS. Then SSH-execute `systemctl restart baseball-api` via paramiko so the live API picks up the new model without a manual deploy. Wrap in try/except — VPS deploy failure should log but not fail the run.
+
+### T058 — Baseline Update on Improvement
+
+- [ ] T058 When improvement is confirmed: overwrite `data/model_baseline.json` with the new metrics + current git SHA so the next run compares against the freshly set bar. When no improvement: leave baseline unchanged and log: `"Model retrained but did not improve — baseline retained"`.
+
+### T059 — Test: Auto-Commit Logic
+
+- [ ] T059 Add `tests/test_auto_commit.py`: mock `subprocess.run` and `paramiko`; test `_evaluate_improvement` with cases: (a) first run / no baseline → True, (b) AUC up 0.003 → True, (c) AUC up 0.001 → False, (d) Brier down 0.003 → True, (e) both flat → False; test `_auto_commit_improvement` verifies correct git command sequence is called on True and is skipped on False.
+
+**Checkpoint**: Run `python daily_runner.py` twice: first run bootstraps baseline and commits; second run only auto-commits if the retrained model beats the stored AUC/Brier. `daily_log.txt` contains explicit improvement/no-improvement verdict after each run. VPS picks up improvements without manual SSH.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
