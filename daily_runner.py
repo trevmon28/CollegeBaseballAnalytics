@@ -172,6 +172,8 @@ def pull_espn_recent(days_back=2):
             time.sleep(0.05)
         except Exception as e:
             log(f"  ESPN pull error for {d}: {e}")
+    if not rows:
+        return pd.DataFrame(columns=["season","date","home_team","away_team","home_score","away_score","neutral"])
     return pd.DataFrame(rows).dropna(subset=["home_score", "away_score"])
 
 def update_game_data():
@@ -542,6 +544,8 @@ def compute_best_bets(odds_df, team_stats, elo_df, clf, feats, edge_min=0.03):
     for _, g in odds_df.iterrows():
         home, away = g["home"], g["away"]
         if home not in idx.index or away not in idx.index:
+            missing = [t for t in (home, away) if t not in idx.index]
+            log(f"  Skipping {home} vs {away} — unknown team(s): {missing}")
             continue
         hf, af = idx.loc[home], idx.loc[away]
         is_neutral = int(bool(g.get("neutral", False)))
