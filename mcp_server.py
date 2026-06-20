@@ -27,7 +27,16 @@ from mcp.server.fastmcp import FastMCP
 API_BASE = os.environ.get("BASEBALL_API_URL", "http://localhost:8000").rstrip("/")
 TIMEOUT  = 10.0
 
-mcp = FastMCP("baseball-predictions")
+# FastMCP 1.x reads host/port from constructor settings (not run() kwargs).
+# When MCP_TRANSPORT=http the service file sets MCP_PORT; we pass it here
+# so the settings object is configured before the first import-time read.
+_mcp_port = int(os.environ.get("MCP_PORT", "9000"))
+_mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
+mcp = FastMCP(
+    "baseball-predictions",
+    host=_mcp_host,
+    port=_mcp_port,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -435,9 +444,6 @@ async def get_model_meta() -> str:
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
-        # FastMCP 1.x: host/port are env-driven (FASTMCP_HOST / FASTMCP_PORT)
-        os.environ.setdefault("FASTMCP_HOST", "127.0.0.1")
-        os.environ.setdefault("FASTMCP_PORT", os.environ.get("MCP_PORT", "9000"))
         mcp.run(transport="streamable-http")
     else:
         mcp.run()
