@@ -648,6 +648,18 @@ def push_dashboard_to_github():
             log(f"  git error: {result.stderr.strip()}")
         return result.returncode == 0
 
+    # Guard against ever repeating the 002-ecliptic-works-fx incident: if this
+    # checkout isn't on master (e.g. someone switched branches for other work
+    # in the same working directory), skip the commit entirely rather than
+    # silently pushing dashboard updates onto whatever branch is checked out.
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    if branch != "master":
+        log(f"Current branch is '{branch}', not master — skipping dashboard auto-commit/push.")
+        return
+
     # Only stage the static dashboard — never auto-commit data files or secrets
     run(["git", "add", "docs/index.html"])
 
@@ -665,7 +677,9 @@ def push_dashboard_to_github():
         log("Git commit failed — skipping push.")
         return
 
-    ok = run(["git", "push", "origin", "HEAD"])
+    # Explicit target (not HEAD) — HEAD is whatever's checked out, which is
+    # exactly how this ended up on the wrong branch for two months.
+    ok = run(["git", "push", "origin", "HEAD:master"])
     if ok:
         log(f"Dashboard pushed to GitHub ({today}).")
     else:
