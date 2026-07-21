@@ -660,6 +660,16 @@ def push_dashboard_to_github():
         log(f"Current branch is '{branch}', not master — skipping dashboard auto-commit/push.")
         return
 
+    # Sync with origin/master before committing. Local and the VPS both run
+    # this daily and both push to master — without pulling first, whichever
+    # runs second gets a non-fast-forward rejection. `--ff-only` is safe here:
+    # if the just-regenerated docs/index.html would collide with an incoming
+    # change, git refuses the pull rather than overwriting anything, and we
+    # just skip this run's push — tomorrow's regeneration catches up either way.
+    if not run(["git", "pull", "--ff-only", "origin", "master"]):
+        log("Could not sync with origin/master before commit — skipping push this run.")
+        return
+
     # Only stage the static dashboard — never auto-commit data files or secrets
     run(["git", "add", "docs/index.html"])
 
