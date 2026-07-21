@@ -27,7 +27,16 @@ from mcp.server.fastmcp import FastMCP
 API_BASE = os.environ.get("BASEBALL_API_URL", "http://localhost:8000").rstrip("/")
 TIMEOUT  = 10.0
 
-mcp = FastMCP("baseball-predictions")
+# FastMCP 1.x reads host/port from constructor settings (not run() kwargs).
+# When MCP_TRANSPORT=http the service file sets MCP_PORT; we pass it here
+# so the settings object is configured before the first import-time read.
+_mcp_port = int(os.environ.get("MCP_PORT", "9000"))
+_mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
+mcp = FastMCP(
+    "baseball-predictions",
+    host=_mcp_host,
+    port=_mcp_port,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -179,7 +188,9 @@ async def predict_game(
             return "Validation error: " + "; ".join(msgs)
         if isinstance(detail, dict) and "suggestions" in detail:
             sugg = ", ".join(detail["suggestions"][:5])
-            return f"Unknown team '{detail.get('team', '?')}'. Did you mean: {sugg}?"
+            team_name = detail.get("team", "?")
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Unknown team '{team_name}'.{hint}"
         return f"Validation error: {detail}"
     if r.status_code == 503:
         return "Model not loaded — run daily_runner.py first."
@@ -221,7 +232,9 @@ async def get_team_predictions(team: str) -> str:
         detail = r.json().get("detail", {})
         if isinstance(detail, dict) and "suggestions" in detail:
             sugg = ", ".join(detail["suggestions"][:5])
-            return f"Team '{team}' not found. Did you mean: {sugg}?"
+            team_name = detail.get("team", team)
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"No predictions found for '{team}'."
     if r.status_code != 200:
         return _http_error(r)
@@ -258,6 +271,11 @@ async def get_team_profile(team: str) -> str:
 
     if r.status_code == 404:
         detail = r.json().get("detail", "")
+        if isinstance(detail, dict) and "suggestions" in detail:
+            sugg = ", ".join(detail["suggestions"][:5])
+            team_name = detail.get("team", team)
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"Team not found: {detail}"
     if r.status_code != 200:
         return _http_error(r)
@@ -316,6 +334,11 @@ async def compare_teams(
 
     if r.status_code == 404:
         detail = r.json().get("detail", "")
+        if isinstance(detail, dict) and "suggestions" in detail:
+            sugg = ", ".join(detail["suggestions"][:5])
+            team_name = detail.get("team", "?")
+            hint = f"  Did you mean: {sugg}?" if sugg else ""
+            return f"Team '{team_name}' not found.{hint}"
         return f"Team not found: {detail}"
     if r.status_code != 200:
         return _http_error(r)
@@ -421,7 +444,6 @@ async def get_model_meta() -> str:
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
-        port = int(os.environ.get("MCP_PORT", "9000"))
-        mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+        mcp.run(transport="streamable-http")
     else:
         mcp.run()

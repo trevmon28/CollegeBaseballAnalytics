@@ -89,6 +89,24 @@ A developer or Claude Code session inspects the model's training configuration �
 
 ---
 
+### User Story 6 — Automatic Model Improvement (Priority: P2)
+
+When the daily pipeline retrains the model and the new version outperforms the stored baseline on a held-out validation set, the improvement is automatically committed to git, pushed to GitHub, and deployed to the VPS — with no manual steps required.
+
+**Why this priority**: Manual deploy is a friction point that delays improvements reaching production. With a fixed held-out evaluation set, automatic promotion is safe: the model only ships if it demonstrably improves on data it never trained on.
+
+**Independent Test**: Run `daily_runner.py` twice in sequence. After the first run, `data/model_baseline.json` must exist. After the second run, `daily_log.txt` must contain either `"auto-improved"` or `"baseline retained"`. If improved, a new git commit must appear in the log matching the auto-commit message pattern.
+
+**Acceptance Scenarios**:
+
+1. **Given** no baseline exists (first run), **When** `daily_runner.py` completes training, **Then** `data/model_baseline.json` is written with current AUC, Brier, feature list, timestamp, and git SHA; a commit is created and pushed.
+2. **Given** a baseline exists and the new model improves AUC by ≥ 0.002, **When** `daily_runner.py` completes training, **Then** a git commit is created with message matching `chore(model): auto-improve AUC=... Brier=... [date]`, pushed to origin, `model_baseline.json` is updated, and `sync_data_to_vps()` deploys the new model to the VPS.
+3. **Given** a baseline exists and the new model does NOT improve (Δ AUC < 0.002 AND Δ Brier < 0.002), **When** `daily_runner.py` completes training, **Then** no git commit is created, baseline is unchanged, and `daily_log.txt` logs `"Model retrained but did not improve — baseline retained"`.
+4. **Given** a git push fails (no remote, auth error), **When** `daily_runner.py` auto-commit fires, **Then** the failure is logged to `daily_log.txt` and the pipeline run completes normally (push failure must not abort the run).
+5. **Given** the VPS deploy step fails (SSH unreachable, wrong password), **When** `daily_runner.py` auto-commit fires, **Then** the failure is logged and the rest of the pipeline completes — the local commit and push still succeed.
+
+---
+
 ### Edge Cases
 
 - What happens when `model.pkl` is missing at startup? API starts but `POST /predict` returns 503 until artifacts are present.
@@ -116,6 +134,11 @@ A developer or Claude Code session inspects the model's training configuration �
 - **FR-013**: Unknown team names MUST return HTTP 404 with a `suggestions` field listing close matches where available.
 - **FR-014**: All request and response shapes MUST be defined as Pydantic models; the auto-generated `/openapi.json` MUST remain accurate at all times.
 - **FR-015**: The API MUST run on `localhost:8000` only in v1 with a single worker process.
+- **FR-016**: After each successful model retrain, `daily_runner.py` MUST write `data/model_baseline.json` containing AUC, Brier score, feature list, trained-at timestamp, and current git SHA.
+- **FR-017**: A model is considered improved if new AUC exceeds baseline AUC by ≥ 0.002 OR new Brier score is lower than baseline by ≥ 0.002, evaluated on a fixed held-out validation slice (the most recent training year, never the live season).
+- **FR-018**: When improvement is detected, `daily_runner.py` MUST create a git commit with the updated `model.pkl` and `model_baseline.json`, push to origin, and call `sync_data_to_vps()`.
+- **FR-019**: When no improvement is detected, `daily_runner.py` MUST log the verdict to `daily_log.txt` and leave baseline and git history unchanged.
+- **FR-020**: Auto-commit/deploy failures (git errors, SSH errors) MUST be caught and logged; they MUST NOT abort the daily pipeline run.
 
 ### Key Entities
 
@@ -135,6 +158,8 @@ A developer or Claude Code session inspects the model's training configuration �
 - **SC-004**: The API detects a new `daily_runner.py` run and refreshes in-memory state within 60 seconds, without a server restart.
 - **SC-005**: All error responses include a human-readable `detail` field; zero raw Python tracebacks reach the caller under any input condition.
 - **SC-006**: The auto-generated `/openapi.json` accurately describes all endpoints and schemas with no missing fields or incorrect types.
+- **SC-007**: Every `daily_runner.py` run produces a `daily_log.txt` entry that explicitly states either `"auto-improved"` (with AUC/Brier delta) or `"baseline retained"` (with delta and reason); zero silent failures.
+- **SC-008**: A model improvement (AUC Δ ≥ 0.002) detected during a pipeline run reaches the production VPS API within the same run, requiring zero manual steps.
 
 ## Assumptions
 
